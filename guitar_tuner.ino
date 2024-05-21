@@ -1,12 +1,15 @@
 #include <arduinoFFT.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <SD.h>
+#include <SPI.h>
 
 LiquidCrystal_I2C lcd(0x3F, 16, 2);
 
-const int buttonPin1 = 2; // Button to start/stop tuning mode
-const int buttonPin2 = 3; // Button to cycle through strings
-const int micPin = 0;     // Analog pin to read the microphone signal
+const int buttonPin1 = 2; // button to start/stop tuning mode
+const int buttonPin2 = 3; // button to cycle through options
+const int micPin = 0;    // analog pin to read the microphone signal
+const int chipSelect = 10; // chip select pin for SD card module
 
 int buttonState1 = 0;
 int buttonState2 = 0;
@@ -22,12 +25,19 @@ unsigned long microSeconds;
 double vReal[SAMPLES];
 double vImag[SAMPLES];
 
-const float stringFrequencies[6] = {82.41, 110.00, 146.83, 196.00, 246.94, 329.63};
-const char* stringNames[6] = {"E", "A", "D", "G", "B", "e"};
+String tuningNames[] = {"Standard", "DropD", "DropC", "OpenD", "OpenE", "OpenG"};
+String selectedTuning;
+int tuningIndex = 0;
 
-int selectedString = 0;
+struct StringFrequency {
+  String name;
+  float frequency;
+};
+
+StringFrequency stringFrequencies[6];
+int currentString = 0;
 bool tuningMode = false;
-bool selectingString = false;
+bool selectingTuning = false;
 
 void setup() {
   lcd.init();
@@ -35,6 +45,11 @@ void setup() {
 
   pinMode(buttonPin1, INPUT);
   pinMode(buttonPin2, INPUT);
+
+  if (!SD.begin(chipSelect)) {
+    lcd.print("SD init failed");
+    while (1);
+  }
 
   lcd.setCursor(0, 0);
   lcd.print(centerText("Start tuning"));
@@ -47,44 +62,41 @@ void loop() {
   buttonState1 = digitalRead(buttonPin1);
   buttonState2 = digitalRead(buttonPin2);
 
-  if (!tuningMode && !selectingString) {
+  if (!tuningMode && !selectingTuning) {
     if (buttonState1 == HIGH) {
-      selectingString = true;
+      selectingTuning = true;
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print(centerText("Press B1 to stop"));
+      lcd.print(centerText("Choose tuning:"));
       lcd.setCursor(0, 1);
-      lcd.print(centerText("anytime"));
-      delay(3000);
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(centerText("Select string:"));
-      lcd.setCursor(0, 1);
-      lcd.print(centerText(stringNames[selectedString]));
+      lcd.print(centerText(tuningNames[tuningIndex]));
       delay(500);
     }
-  } else if (selectingString) {
+  } else if (selectingTuning) {
     if (buttonState2 == HIGH) {
-      selectedString = (selectedString + 1) % 6;
+      tuningIndex = (tuningIndex + 1) % 6;
       lcd.setCursor(0, 1);
       lcd.print("                ");
       lcd.setCursor(0, 1);
-      lcd.print(centerText(stringNames[selectedString]));
+      lcd.print(centerText(tuningNames[tuningIndex]));
       delay(500);
     }
 
     if (buttonState1 == HIGH) {
-      selectingString = false;
+      selectedTuning = tuningNames[tuningIndex];
+      loadTuningFromFile(selectedTuning);
+      selectingTuning = false;
       tuningMode = true;
+      currentString = 0;
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print(centerText("Tuning: "));
-      lcd.print(stringNames[selectedString]);
+      lcd.print(stringFrequencies[currentString].name);
       delay(500);
     }
   } else if (tuningMode) {
     double frequency = calculateFrequency();
-    float targetFrequency = stringFrequencies[selectedString];
+    float targetFrequency = stringFrequencies[currentString].frequency;
     lcd.setCursor(0, 1);
 
     if (frequency < targetFrequency - 5) {
@@ -93,32 +105,25 @@ void loop() {
       lcd.print(centerText("Too high"));
     } else {
       lcd.print(centerText("In tune "));
-      tuningMode = false;
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(centerText("Tuned!"));
-      lcd.setCursor(0, 1);
-      lcd.print(centerText("Wait to continue..."));
-      delay(3000); // Wait for 3 seconds
-
-      selectedString++;
-      if (selectedString >= 6) {
+      delay(1000); // wait for 1 second before moving to the next string
+      currentString++;
+      if (currentString >= 6) {
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(centerText("Your guitar is"));
         lcd.setCursor(0, 1);
         lcd.print(centerText("tuned!"));
         delay(3000); // Display message for 3 seconds
-        selectedString = 0;
+        currentString = 0;
+        tuningMode = false;
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(centerText("Start tuning"));
       } else {
-        tuningMode = true; // Resume tuning for the next string
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print(centerText("Tuning: "));
-        lcd.print(stringNames[selectedString]);
+        lcd.print(stringFrequencies[currentString].name);
         delay(500);
       }
     }
@@ -156,7 +161,24 @@ double calculateFrequency() {
   return peak;
 }
 
-// Function to center the text
+void loadTuningFromFile(String tuningName) {
+  File tuningFile = SD.open(tuningName + ".txt");
+  if (tuningFile) {
+    for (int i = 0; i < 6; i++) {
+      stringFrequencies[i].name = tuningFile.readStringUntil(',');
+      stringFrequencies[i].frequency = tuningFile.readStringUntil('\n').toFloat();
+    }
+    tuningFile.close();
+  } else {
+    lcd.clear();
+    lcd.print("Failed to open");
+    lcd.setCursor(0, 1);
+    lcd.print("tuning file");
+    while (1);
+  }
+}
+
+// function to center the text
 String centerText(const char* text) {
   int len = strlen(text);
   int pos = (16 - len) / 2;
