@@ -6,15 +6,15 @@
 
 LiquidCrystal_I2C lcd(0x3F, 16, 2);
 
-const int buttonPin1 = 2; // button to start/stop tuning mode
-const int buttonPin2 = 3; // button to cycle through options
-const int micPin = 0;    // analog pin to read the microphone signal
-const int chipSelect = 10; // chip select pin for SD card module
+const int buttonPin1 = 2; // button1 to start/stop tuning mode
+const int buttonPin2 = 3; // button2 to cycle through options
+const int micPin = 0;     // analog pin to read the microphone signal
+const int chipSelect = 53; // chip select pin for SD card module
 
 int buttonState1 = 0;
 int buttonState2 = 0;
 
-#define SAMPLES 128
+#define SAMPLES 512
 #define SAMPLING_FREQUENCY 2048
 
 arduinoFFT FFT = arduinoFFT();
@@ -67,6 +67,12 @@ void loop() {
       selectingTuning = true;
       lcd.clear();
       lcd.setCursor(0, 0);
+      lcd.print(centerText("Press B1 to stop"));
+      lcd.setCursor(0, 1);
+      lcd.print(centerText("anytime"));
+      delay(3000);
+      lcd.clear();
+      lcd.setCursor(0, 0);
       lcd.print(centerText("Choose tuning:"));
       lcd.setCursor(0, 1);
       lcd.print(centerText(tuningNames[tuningIndex]));
@@ -99,11 +105,16 @@ void loop() {
     float targetFrequency = stringFrequencies[currentString].frequency;
     lcd.setCursor(0, 1);
 
-    if (frequency < targetFrequency - 5) {
-      lcd.print(centerText("Too low "));
-    } else if (frequency > targetFrequency + 5) {
-      lcd.print(centerText("Too high"));
+    if (frequency < targetFrequency - 10) {
+      lcd.print("Too low by ");
+      lcd.print(targetFrequency - frequency);
+      lcd.print(" Hz");
+    } else if (frequency > targetFrequency + 10) {
+      lcd.print("Too high by ");
+      lcd.print(frequency - targetFrequency);
+      lcd.print(" Hz");
     } else {
+      lcd.clear();
       lcd.print(centerText("In tune "));
       delay(1000); // wait for 1 second before moving to the next string
       currentString++;
@@ -128,6 +139,7 @@ void loop() {
       }
     }
 
+    // Check if button 1 is pressed to reset to the start tuning screen
     if (buttonState1 == HIGH) {
       tuningMode = false;
       lcd.clear();
@@ -147,9 +159,10 @@ double calculateFrequency() {
     vReal[i] = analogRead(micPin);
     vImag[i] = 0;
 
-    while (micros() < (microSeconds + samplingPeriod)) {
+    while ((micros() - microSeconds) < samplingPeriod) {
       // nothing
     }
+    microSeconds += samplingPeriod;
   }
 
   FFT.Windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
@@ -158,7 +171,7 @@ double calculateFrequency() {
 
   double peak = FFT.MajorPeak(vReal, SAMPLES, SAMPLING_FREQUENCY);
   Serial.println(peak);
-  return peak;
+  return peak / 2;
 }
 
 void loadTuningFromFile(String tuningName) {
